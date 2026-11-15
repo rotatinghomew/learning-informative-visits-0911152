@@ -44,6 +44,29 @@ def main():
             loaded = call("http://127.0.0.1:8766/analyses/" + record["id"])
             if loaded != record:
                 raise RuntimeError("保存的分析与返回值不一致")
+            trend = call("http://127.0.0.1:8766/analyses", {
+                "request_key": "local-visit-adjusted-trend", "release": "term-a",
+                "analysis": "visit_adjusted_trend", "parameters": {"bootstrap_replicates": 200},
+            })
+            for group, body in trend["result"]["groups"].items():
+                print(f"[visit_adjusted_trend] {group} 可比较时间桶={body['comparable_bins']} "
+                      f"条件性时间桶={body['conditional_bins']}")
+                for period in body["periods"]:
+                    print("  第{bin}桶(day {start}-{end}) 状态={status} 原始={raw} 调整={adj}".format(
+                        bin=period["bin"], start=period["day_start"], end=period["day_end"],
+                        status=period["evidence_status"],
+                        raw=period["raw_respondent_mean"],
+                        adj=period["adjusted_mean"]))
+            trend_loaded = call("http://127.0.0.1:8766/analyses/" + trend["id"])
+            if trend_loaded != trend:
+                raise RuntimeError("保存的走势分析与返回值不一致")
+            # 资料版本切换：同一分析在 limited 版本上只能给证据不足的条件性结构。
+            limited = call("http://127.0.0.1:8766/analyses", {
+                "request_key": "local-visit-adjusted-trend-limited", "release": "limited",
+                "analysis": "visit_adjusted_trend", "parameters": {"bootstrap_replicates": 200},
+            })
+            if limited["result"]["diagnostics"]["reason"] != "no_visits_in_release":
+                raise RuntimeError("limited 版本应标记为无测量证据")
             print(f"本地分析完成，用时 {time.monotonic() - started:.2f} 秒")
         finally:
             for process in processes:

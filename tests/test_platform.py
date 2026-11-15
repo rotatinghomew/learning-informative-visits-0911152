@@ -78,6 +78,40 @@ class PlatformTests(unittest.TestCase):
         status, catalog = self.request("/catalog")
         self.assertEqual(status, 200)
         self.assertIn("overview", catalog["analyses"])
+        self.assertIn("visit_adjusted_trend", catalog["analyses"])
+
+    def test_visit_trend_save_query_and_version_switch(self):
+        for release in ("term-a", "term-b", "limited"):
+            request = {"request_key": f"trend-{release}", "release": release,
+                       "analysis": "visit_adjusted_trend",
+                       "parameters": {"bootstrap_replicates": 120}}
+            status, record = self.request("/analyses", request)
+            self.assertEqual(status, 201)
+            self.assertEqual(record["request"]["release"], release)
+            self.assertEqual(record["result"]["analysis"], "visit_adjusted_trend")
+            # 保存后可按 id 回读，内容一致。
+            self.assertEqual(record, self.request("/analyses/" + record["id"])[1])
+            # 相同完整请求幂等返回同一记录。
+            self.assertEqual(record["id"], self.request("/analyses", request)[1]["id"])
+        listed = {item["request"]["request_key"]: item for item in self.request("/analyses")[1]["analyses"]}
+        self.assertTrue({"trend-term-a", "trend-term-b", "trend-limited"} <= set(listed))
+        limited = listed["trend-limited"]["result"]
+        self.assertEqual(limited["diagnostics"]["reason"], "no_visits_in_release")
+
+    def test_visit_trend_conflict_on_changed_parameters(self):
+        request = {"request_key": "trend-conflict", "release": "term-a",
+                   "analysis": "visit_adjusted_trend", "parameters": {"bin_days": 30}}
+        self.request("/analyses", request)
+        with self.assertRaises(HTTPError) as raised:
+            self.request("/analyses", {**request, "parameters": {"bin_days": 15}})
+        self.assertEqual(raised.exception.code, 409)
+
+    def test_visit_trend_invalid_parameters_are_422(self):
+        with self.assertRaises(HTTPError) as raised:
+            self.request("/analyses", {"request_key": "trend-bad", "release": "term-a",
+                                       "analysis": "visit_adjusted_trend",
+                                       "parameters": {"bin_days": 0}})
+        self.assertEqual(raised.exception.code, 422)
 
     def test_save_retrieve_and_replay(self):
         request = {"request_key": "replay", "release": "term-a", "analysis": "overview"}
